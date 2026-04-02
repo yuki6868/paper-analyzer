@@ -1,0 +1,8 @@
+streamlit
+plotly
+numpy
+scikit-learn
+sentence-transformers
+feedparser
+requests
+python-dotenv

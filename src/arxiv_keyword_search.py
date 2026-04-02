@@ -39,7 +39,9 @@ def build_search_query(keyword: str, field: str = "all") -> str:
 
 
 def _fetch_with_retry(url: str, *, retries: int = 5, base_wait: float = 3.0) -> bytes:
-    """arXiv API を User-Agent 付きで呼び、429/5xx で指数バックオフ再試行する。"""
+    """
+    arXiv API を User-Agent 付きで呼び、429/5xx で再試行する。
+    """
     headers = {
         "User-Agent": DEFAULT_USER_AGENT,
         "Accept": "application/atom+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -56,14 +58,20 @@ def _fetch_with_retry(url: str, *, retries: int = 5, base_wait: float = 3.0) -> 
             last_error = e
             if e.code in (429, 500, 502, 503, 504):
                 wait = base_wait * (2 ** attempt)
-                print(f"arXiv API が一時的に混雑しています (HTTP {e.code})。{wait:.1f}秒待って再試行します... [{attempt + 1}/{retries}]")
+                print(
+                    f"arXiv API が一時的に混雑しています (HTTP {e.code})。"
+                    f"{wait:.1f}秒待って再試行します... [{attempt + 1}/{retries}]"
+                )
                 time.sleep(wait)
                 continue
             raise
         except URLError as e:
             last_error = e
             wait = base_wait * (2 ** attempt)
-            print(f"arXiv API への接続に失敗しました。{wait:.1f}秒待って再試行します... [{attempt + 1}/{retries}]")
+            print(
+                f"arXiv API への接続に失敗しました。"
+                f"{wait:.1f}秒待って再試行します... [{attempt + 1}/{retries}]"
+            )
             time.sleep(wait)
             continue
 
@@ -125,34 +133,44 @@ def search_arxiv(
     return papers
 
 
-def search_latest_by_category(category: str, max_results: int = 200) -> List[ArxivPaper]:
+def search_latest_by_category(
+    category: str,
+    max_results: int = 200,
+    start: int = 0,
+    batch_size: int = 100,
+) -> List[ArxivPaper]:
     """
     指定カテゴリの最新論文を取得する。
-    いきなり大きすぎる件数は避け、必要なら呼び出し側で分割取得する。
+    100件ずつ分割し、間に待機を入れて 429 を避けやすくする。
     """
     if max_results <= 0:
         return []
 
-    # arXiv 側の負荷と 429 を少し避けるため、100件ずつに分割取得
-    batch_size = 100
-    results: List[ArxivPaper] = []
+    papers: List[ArxivPaper] = []
+    remaining = max_results
+    current_start = start
 
-    for start in range(0, max_results, batch_size):
-        size = min(batch_size, max_results - start)
+    while remaining > 0:
+        current_batch = min(batch_size, remaining)
         batch = search_arxiv(
             keyword=category,
             field="cat",
-            start=start,
-            max_results=size,
+            start=current_start,
+            max_results=current_batch,
             sort_by="submittedDate",
             sort_order="descending",
         )
-        results.extend(batch)
+        if not batch:
+            break
 
-        if start + batch_size < max_results:
+        papers.extend(batch)
+        remaining -= len(batch)
+        current_start += len(batch)
+
+        if remaining > 0:
             time.sleep(3)
 
-    return results
+    return papers
 
 
 def print_papers(papers: List[ArxivPaper]) -> None:
