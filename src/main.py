@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from dotenv import load_dotenv
 import time
 
 from arxiv_keyword_search import search_arxiv
@@ -33,6 +34,8 @@ def build_paper_message(
 
 
 def main(notify: bool = False, keyword: str = "large language model") -> None:
+    load_dotenv()
+
     papers = search_arxiv(
         keyword=keyword,
         field="all",
@@ -50,7 +53,11 @@ def main(notify: bool = False, keyword: str = "large language model") -> None:
 
     notifier = None
     if notify:
-        webhook_url = os.environ["DISCORD_WEBHOOK_URL"]
+        webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+
+        if not webhook_url:
+            raise ValueError("DISCORD_WEBHOOK_URL が設定されていません")
+            
         notifier = DiscordNotifier(
             webhook_url=webhook_url,
             username="arXiv Translator",
