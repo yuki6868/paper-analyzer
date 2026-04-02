@@ -6,6 +6,7 @@ import time
 import urllib.error
 from dataclasses import asdict
 from typing import Any
+from dotenv import load_dotenv
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
@@ -32,6 +33,7 @@ except Exception:
 DEFAULT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 DEFAULT_CATEGORY = "cs.AI"
 
+load_dotenv()
 
 class SimpleLibreTranslator:
     def __init__(self, api_url: str, source_lang: str = "en", target_lang: str = "ja") -> None:
@@ -311,11 +313,29 @@ def main() -> None:
             value=os.getenv("LIBRETRANSLATE_API_URL", "http://127.0.0.1:7860"),
         )
         model_name = st.text_input("埋め込みモデル", value=DEFAULT_MODEL_NAME)
-        webhook_url = st.text_input(
-            "Discord Webhook URL",
-            value=os.getenv("DISCORD_WEBHOOK_URL", ""),
-            type="password",
+        if "use_env_webhook" not in st.session_state:
+            st.session_state["use_env_webhook"] = True
+
+        if "discord_webhook_url" not in st.session_state:
+            st.session_state["discord_webhook_url"] = os.getenv("DISCORD_WEBHOOK_URL", "")
+
+        use_env_webhook = st.checkbox(
+            "`.env` の Discord Webhook URL を使う",
+            key="use_env_webhook",
         )
+
+        if use_env_webhook:
+            st.session_state["discord_webhook_url"] = os.getenv("DISCORD_WEBHOOK_URL", "")
+
+        st.text_input(
+            "Discord Webhook URL",
+            key="discord_webhook_url",
+            type="password",
+            disabled=use_env_webhook,
+            help="`.env` を使わない場合はここに直接入力できます。",
+        )
+
+        webhook_url = st.session_state["discord_webhook_url"]
         discord_username = st.text_input("Discord username", value="arXiv Translator")
 
         search_clicked = st.button("論文検索", use_container_width=True)
