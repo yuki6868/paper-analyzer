@@ -1,0 +1,5 @@
+feedparser
+numpy
+scikit-learn
+sentence-transformers
+plotly

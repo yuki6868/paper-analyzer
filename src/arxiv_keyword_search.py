@@ -1,4 +1,3 @@
-# arxiv_keyword_search.py
 from __future__ import annotations
 
 import time
@@ -6,11 +5,13 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import List
+from urllib.error import HTTPError, URLError
 
 import feedparser
 
 
 BASE_URL = "https://export.arxiv.org/api/query"
+DEFAULT_USER_AGENT = "paper-analyzer/1.0 (contact: local-user)"
 
 
 @dataclass
@@ -37,6 +38,38 @@ def build_search_query(keyword: str, field: str = "all") -> str:
     return f"{field}:{keyword}"
 
 
+def _fetch_with_retry(url: str, *, retries: int = 5, base_wait: float = 3.0) -> bytes:
+    """arXiv API を User-Agent 付きで呼び、429/5xx で指数バックオフ再試行する。"""
+    headers = {
+        "User-Agent": DEFAULT_USER_AGENT,
+        "Accept": "application/atom+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+
+    last_error: Exception | None = None
+
+    for attempt in range(retries):
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                return response.read()
+        except HTTPError as e:
+            last_error = e
+            if e.code in (429, 500, 502, 503, 504):
+                wait = base_wait * (2 ** attempt)
+                print(f"arXiv API が一時的に混雑しています (HTTP {e.code})。{wait:.1f}秒待って再試行します... [{attempt + 1}/{retries}]")
+                time.sleep(wait)
+                continue
+            raise
+        except URLError as e:
+            last_error = e
+            wait = base_wait * (2 ** attempt)
+            print(f"arXiv API への接続に失敗しました。{wait:.1f}秒待って再試行します... [{attempt + 1}/{retries}]")
+            time.sleep(wait)
+            continue
+
+    raise RuntimeError(f"arXiv API の取得に失敗しました: {last_error}")
+
+
 def search_arxiv(
     keyword: str,
     field: str = "all",
@@ -47,6 +80,7 @@ def search_arxiv(
 ) -> List[ArxivPaper]:
     """
     arXiv APIでキーワード検索して論文一覧を返す。
+    429等に備えてリトライする。
     """
     search_query = build_search_query(keyword, field=field)
 
@@ -59,9 +93,7 @@ def search_arxiv(
     }
 
     url = f"{BASE_URL}?{urllib.parse.urlencode(params)}"
-
-    with urllib.request.urlopen(url) as response:
-        raw_data = response.read()
+    raw_data = _fetch_with_retry(url)
 
     feed = feedparser.parse(raw_data)
     papers: List[ArxivPaper] = []
@@ -91,6 +123,36 @@ def search_arxiv(
         )
 
     return papers
+
+
+def search_latest_by_category(category: str, max_results: int = 200) -> List[ArxivPaper]:
+    """
+    指定カテゴリの最新論文を取得する。
+    いきなり大きすぎる件数は避け、必要なら呼び出し側で分割取得する。
+    """
+    if max_results <= 0:
+        return []
+
+    # arXiv 側の負荷と 429 を少し避けるため、100件ずつに分割取得
+    batch_size = 100
+    results: List[ArxivPaper] = []
+
+    for start in range(0, max_results, batch_size):
+        size = min(batch_size, max_results - start)
+        batch = search_arxiv(
+            keyword=category,
+            field="cat",
+            start=start,
+            max_results=size,
+            sort_by="submittedDate",
+            sort_order="descending",
+        )
+        results.extend(batch)
+
+        if start + batch_size < max_results:
+            time.sleep(3)
+
+    return results
 
 
 def print_papers(papers: List[ArxivPaper]) -> None:
@@ -123,6 +185,3 @@ if __name__ == "__main__":
         sort_order="descending",
     )
     print_papers(papers)
-
-    # 複数回連続で呼ぶときは、公式推奨に従って少し待つ
-    time.sleep(3)
