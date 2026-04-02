@@ -1,16 +1,43 @@
 # main.py
-from arxiv_keyword_search import search_arxiv, print_papers
+from __future__ import annotations
+
+import argparse
+import os
+import time
+
+from arxiv_keyword_search import search_arxiv
 from translator import LibreTranslator
+from discord_notifier import DiscordNotifier
 
 
-def main() -> None:
-    keyword = "large language model"
+def build_paper_message(
+    no: int,
+    title: str,
+    summary_ja: str,
+    abs_url: str,
+    published: str,
+    authors: list[str],
+) -> str:
+    authors_text = ", ".join(authors[:5])
+    if len(authors) > 5:
+        authors_text += " ほか"
 
+    return (
+        f"## No.{no}\n"
+        f"**Title**: {title}\n"
+        f"**Published**: {published}\n"
+        f"**Authors**: {authors_text}\n"
+        f"**URL**: {abs_url}\n\n"
+        f"**日本語要約**\n{summary_ja}"
+    )
+
+
+def main(notify: bool = False, keyword: str = "large language model") -> None:
     papers = search_arxiv(
         keyword=keyword,
         field="all",
         start=0,
-        max_results=5,
+        max_results=3,
         sort_by="relevance",
         sort_order="descending",
     )
@@ -21,20 +48,41 @@ def main() -> None:
         target_lang="ja",
     )
 
+    notifier = None
+    if notify:
+        webhook_url = os.environ["DISCORD_WEBHOOK_URL"]
+        notifier = DiscordNotifier(
+            webhook_url=webhook_url,
+            username="arXiv Translator",
+        )
+
     for i, paper in enumerate(papers, start=1):
         print(f"[{i}/{len(papers)}] 翻訳中: {paper.title}")
-        # translated_summary = translator.translate_text_with_retry(paper.summary)
-        paper.summary_ja = translator.translate_text_with_retry(paper.summary)
+        summary_ja = translator.translate_text_with_retry(paper.summary)
+
+        message = build_paper_message(
+            no=i,
+            title=paper.title,
+            summary_ja=summary_ja,
+            abs_url=paper.abs_url,
+            published=paper.published,
+            authors=paper.authors,
+        )
 
         print("=" * 80)
-        print(f"Title      : {paper.title}")
-        print(f"Summary EN : {paper.summary}")
-        print()
-        print(f"Summary JA : {paper.summary_ja}")
+        print(message)
         print()
 
-    print_papers(papers)
+        if notify and notifier is not None:
+            chunks = notifier.split_message(message, limit=1800)
+            notifier.send_messages(chunks, wait_sec=1.0)
+            time.sleep(1)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--notify", action="store_true", help="Discordに通知する")
+    parser.add_argument("--keyword", type=str, default="large language model", help="検索キーワード")
+    args = parser.parse_args()
+
+    main(notify=args.notify, keyword=args.keyword)
